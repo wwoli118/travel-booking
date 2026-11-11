@@ -3,10 +3,13 @@
 data/ledger.csv 에 주문 1건당 1행. 상태가 바뀌면 같은 행을 갱신한다.
 - 보류 주문 생성 시 자동 추가 (상태: 결제대기)
 - 보류 주문 취소 시 자동 갱신 (상태: 취소)
-- 사람이 Duffel 대시보드에서 결제한 뒤 mark-paid 로 직접 표시 (상태: 결제완료)
+- 사람이 Duffel 대시보드에서 결제한 뒤 sync 로 Duffel 주문 상태를 조회해 반영 (조회 전용)
+  또는 mark-paid 로 직접 표시 (상태: 결제완료)
 
 실행:
     python -m src.ledger list
+    python -m src.ledger sync                      # 취소 외 전체 주문의 결제 여부 조회·반영
+    python -m src.ledger sync --order ord_... --dry-run
     python -m src.ledger mark-paid --order ord_0000... --receipt
     python -m src.ledger receipt --order ord_0000... --yes
 """
@@ -19,15 +22,26 @@ import os
 import sys
 import tempfile
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from .config import DATA_DIR
+import httpx
+
+from .config import DATA_DIR, ConfigError, load_duffel_key
+from .duffel import DuffelError
+from .order_status import (
+    PAYMENT_AWAITING,
+    PAYMENT_CANCELLED,
+    PAYMENT_PAID,
+    OrderStatus,
+    fetch_order_status,
+)
 
 LEDGER_PATH = DATA_DIR / "ledger.csv"
 
-COLUMNS = [
+REQUIRED_COLUMNS = [
     "기록일시",
     "출발일",
     "구분",
@@ -51,6 +65,9 @@ COLUMNS = [
     "비고",
     "테스트",
 ]
+# 나중에 추가된 열: 예전 파일에 없어도 빈 값으로 읽는다
+OPTIONAL_COLUMNS = ["항공권번호", "최종조회일시"]
+COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 
 STATUS_HELD = "결제대기"
 STATUS_PAID = "결제완료"
@@ -70,10 +87,10 @@ def read_rows(path: Path = LEDGER_PATH) -> list[dict]:
         return []
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        missing = [c for c in COLUMNS if c not in (reader.fieldnames or [])]
+        missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
         if missing:
             raise LedgerError(f"{path} 열 구성이 다릅니다. 없는 열: {', '.join(missing)}")
-        return list(reader)
+        return [{**{c: "" for c in OPTIONAL_COLUMNS}, **row} for row in reader]
 
 
 def write_rows(rows: list[dict], path: Path = LEDGER_PATH) -> None:
@@ -228,6 +245,116 @@ def format_list(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 결제 여부 조회
+
+def _fmt(dt: datetime | None) -> str:
+    return "정보 없음" if dt is None else dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+
+def decide_update(row: dict, st: OrderStatus, now: datetime | None = None) -> tuple[dict, list[str]]:
+    """Duffel 상태를 보고 내역에 반영할 변경과 알릴 문구를 정한다 (파일은 건드리지 않음).
+
+    상태가 명확할 때만 바꾸고, 내역과 Duffel이 어긋나면 덮어쓰지 않고 경고만 한다.
+    """
+    now = now or datetime.now(timezone.utc)
+    changes: dict = {}
+    msgs: list[str] = []
+    cur = row["상태"]
+
+    if st.total_amount is not None and (
+        f"{st.total_amount:.2f}" != row["금액"] or (st.total_currency or "") != row["통화"]
+    ):
+        msgs.append(
+            f"[주의] 금액이 다릅니다: 내역 {row['금액']} {row['통화']} / Duffel {st.total_amount:.2f} {st.total_currency}"
+        )
+    if st.ticket_numbers:
+        tickets = "; ".join(st.ticket_numbers)
+        if row.get("항공권번호", "") != tickets:
+            changes["항공권번호"] = tickets
+
+    if st.state == PAYMENT_CANCELLED:
+        if cur != STATUS_CANCELLED:
+            changes.update({"상태": STATUS_CANCELLED, "비고": f"Duffel 조회: {_fmt(st.cancelled_at)} 취소됨"})
+            if cur == STATUS_PAID:
+                msgs.append("[주의] 결제완료였던 주문이 취소됐습니다. Duffel에서 환불 여부를 확인하고 환불액을 기록하세요.")
+            else:
+                msgs.append("결제 마감 경과 등으로 취소된 것으로 보입니다.")
+    elif st.state == PAYMENT_PAID:
+        if cur == STATUS_HELD:
+            changes.update(
+                {
+                    "상태": STATUS_PAID,
+                    "결제확인일시": (st.paid_at or now).astimezone().isoformat(timespec="seconds"),
+                    "비고": "Duffel 조회로 결제 확인",
+                }
+            )
+            if row["영수증"] != "Y":
+                msgs.append("영수증을 받으면 receipt --yes 로 표시하세요.")
+        elif cur == STATUS_CANCELLED:
+            msgs.append("[주의] 내역은 '취소'인데 Duffel은 결제완료입니다. 직접 확인하세요 (내역은 바꾸지 않음).")
+        elif not row["결제확인일시"] and st.paid_at:
+            changes["결제확인일시"] = st.paid_at.astimezone().isoformat(timespec="seconds")
+    elif st.state == PAYMENT_AWAITING:
+        if cur == STATUS_PAID:
+            msgs.append(
+                "[주의] 내역은 '결제완료'인데 Duffel은 아직 결제대기입니다. 실제 결제 여부를 확인하세요 (내역은 바꾸지 않음)."
+            )
+        elif cur == STATUS_CANCELLED:
+            msgs.append("[주의] 내역은 '취소'인데 Duffel은 결제대기입니다. 직접 확인하세요 (내역은 바꾸지 않음).")
+        if st.deadline_passed(now):
+            msgs.append(f"[주의] 결제 마감({_fmt(st.payment_required_by)})이 지났습니다. 곧 자동 취소될 수 있습니다.")
+        else:
+            msgs.append(f"결제 마감: {_fmt(st.payment_required_by)}")
+    return changes, msgs
+
+
+def sync(
+    api_key: str,
+    path: Path = LEDGER_PATH,
+    order_id: str | None = None,
+    dry_run: bool = False,
+    client: httpx.Client | None = None,
+    now: datetime | None = None,
+) -> tuple[list[str], int]:
+    """Duffel에서 주문 상태를 조회해 내역에 반영한다. (출력 문구, 조회 실패 건수)."""
+    rows = read_rows(path)
+    if order_id:
+        targets: Iterable[dict] = [_find(rows, order_id)]
+    else:
+        targets = [r for r in rows if r["상태"] != STATUS_CANCELLED]
+    out: list[str] = []
+    failures = 0
+    changed_any = False
+    checked_at = now_local()
+    for row in targets:
+        head = f"{row['예약번호'] or '-'} {row['주문ID']}"
+        try:
+            st = fetch_order_status(row["주문ID"], api_key, client=client)
+        except (DuffelError, ValueError, KeyError) as e:
+            failures += 1
+            out.append(f"{head}: [조회 실패] {e}")
+            continue
+        changes, msgs = decide_update(row, st, now)
+        if "상태" in changes:
+            out.append(f"{head}: {row['상태']} → {changes['상태']} (Duffel: {st.label})")
+        else:
+            out.append(f"{head}: {row['상태']} 유지 (Duffel: {st.label})")
+        if "항공권번호" in changes:
+            out.append(f"    항공권번호: {changes['항공권번호']}")
+        out += [f"    {m}" for m in msgs]
+        if not dry_run:
+            row.update(changes)
+            row["최종조회일시"] = checked_at
+            changed_any = True
+    if not targets:
+        out.append("조회할 주문이 없습니다 (취소된 주문은 --order로 지정할 때만 조회).")
+    if changed_any:
+        write_rows(rows, path)
+    if dry_run:
+        out.append("(--dry-run: 내역 파일은 바꾸지 않았습니다)")
+    return out, failures
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="회계용 예약 내역")
     sub = p.add_subparsers(dest="command", required=True)
@@ -235,6 +362,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mp = sub.add_parser("mark-paid", help="사람이 결제한 주문을 결제완료로 표시")
     mp.add_argument("--order", required=True)
     mp.add_argument("--receipt", action="store_true", help="영수증을 받았으면 표시")
+    sy = sub.add_parser("sync", help="Duffel에서 결제 여부를 조회해 내역에 반영 (조회 전용)")
+    sy.add_argument("--order", help="특정 주문만 조회 (생략 시 취소 외 전체)")
+    sy.add_argument("--dry-run", action="store_true", help="조회 결과만 보고 내역은 바꾸지 않음")
     rc = sub.add_parser("receipt", help="영수증 여부 변경")
     rc.add_argument("--order", required=True)
     g = rc.add_mutually_exclusive_group(required=True)
@@ -243,9 +373,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: list[str] | None = None, path: Path = LEDGER_PATH) -> int:
+def main(
+    argv: list[str] | None = None,
+    path: Path = LEDGER_PATH,
+    client: httpx.Client | None = None,
+) -> int:
     args = parse_args(argv)
     try:
+        if args.command == "sync":
+            api_key = load_duffel_key()
+            lines, failures = sync(api_key, path, args.order, args.dry_run, client)
+            print("\n".join(lines))
+            if failures:
+                print(f"[오류] {failures}건 조회에 실패했습니다. 위 원인을 확인하세요.", file=sys.stderr)
+                return 1
+            return 0
         if args.command == "list":
             print(format_list(read_rows(path)))
         elif args.command == "mark-paid":
@@ -254,7 +396,7 @@ def main(argv: list[str] | None = None, path: Path = LEDGER_PATH) -> int:
         else:
             r = set_receipt(args.order, args.receipt, path)
             print(f"영수증 여부를 {r['영수증']}(으)로 바꿨습니다: {r['예약번호']}")
-    except LedgerError as e:
+    except (LedgerError, ConfigError) as e:
         print(f"[오류] {e}", file=sys.stderr)
         return 1
     return 0
