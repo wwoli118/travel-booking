@@ -1,0 +1,29 @@
+{
+  "hotel": {
+    "name": "Example Hotel Manila",
+    "email": "reservations@example-hotel.com"
+  },
+  "booking": {
+    "reference": "1234567890",
+    "platform": "Booking.com",
+    "check_in": "2026-12-20",
+    "check_out": "2026-12-23",
+    "rooms": 2
+  },
+  "booker": {
+    "name": "GILDONG HONG",
+    "company": "Example Co., Ltd.",
+    "email": "travel@example.com",
+    "phone": "+82 2 1234 5678"
+  },
+  "payment": {
+    "card_holder": "GILDONG HONG",
+    "card_holder_stays": false,
+    "card_last4": "1234",
+    "prepaid": true
+  },
+  "guests": [
+    {"room": 1, "given_name": "YOUNGHEE", "family_name": "KIM"},
+    {"room": 2, "given_name": "MINSU", "family_name": "PARK"}
+  ]
+}

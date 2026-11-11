@@ -29,6 +29,14 @@ ADULT_AGE = 18  # Duffel 기준 성인(adult) 나이
 PASSPORT_RECOMMENDED_VALIDITY_DAYS = 183  # 많은 국가가 입국 시 6개월 이상 잔여 유효기간을 요구
 
 
+def normalize_passport_name(v: str) -> str:
+    """여권 영문 표기로 정리·검증한다 (대문자, 공백 하나, 하이픈 허용)."""
+    v = " ".join(str(v).split()).upper()
+    if not PASSPORT_NAME_RE.match(v):
+        raise ValueError(f"여권 영문 표기(A–Z, 공백, 하이픈)만 입력하세요: {v!r}")
+    return v
+
+
 class TravelerFileError(Exception):
     """travelers.json을 읽거나 검증하지 못했을 때. 원인을 담는다."""
 
@@ -81,12 +89,7 @@ class Traveler(BaseModel):
     @field_validator("given_name", "family_name", mode="before")
     @classmethod
     def _passport_name(cls, v: str) -> str:
-        v = " ".join(str(v).split()).upper()
-        if not PASSPORT_NAME_RE.match(v):
-            raise ValueError(
-                f"여권 영문 표기(A–Z, 공백, 하이픈)만 입력하세요: {v!r}"
-            )
-        return v
+        return normalize_passport_name(v)
 
     @field_validator("title", mode="before")
     @classmethod
