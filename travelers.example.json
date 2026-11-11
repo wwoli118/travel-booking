@@ -11,7 +11,12 @@
       "gender": "m",
       "born_on": "1985-03-02",
       "email": "hong@example.com",
-      "phone_number": "+821012345678"
+      "phone_number": "+821012345678",
+      "passport": {
+        "number": "M12345678",
+        "expires_on": "2031-05-01",
+        "issuing_country": "KR"
+      }
     },
     {
       "title": "ms",

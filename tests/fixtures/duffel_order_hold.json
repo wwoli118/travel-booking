@@ -1,0 +1,14 @@
+{
+  "data": {
+    "id": "ord_0000test",
+    "booking_reference": "RZPVXK",
+    "live_mode": false,
+    "total_amount": "289.00",
+    "total_currency": "USD",
+    "payment_status": {
+      "awaiting_payment": true,
+      "payment_required_by": "2099-01-02T09:00:00Z",
+      "price_guarantee_expires_at": "2099-01-01T09:00:00Z"
+    }
+  }
+}

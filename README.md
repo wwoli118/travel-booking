@@ -1,6 +1,6 @@
 # 여행 예약 자동화 (회사 출장용)
 
-원칙은 [CLAUDE.md](CLAUDE.md)를 따릅니다. 결제·주문 생성은 하지 않으며, 현재는 **Duffel 테스트(샌드박스) 키로 편도 항공권 검색과 예약 전 확인 요약**까지 합니다.
+원칙은 [CLAUDE.md](CLAUDE.md)를 따릅니다. 결제·주문 생성은 하지 않으며, 현재는 **Duffel 테스트(샌드박스) 키로 편도 항공권 검색 → 예약 전 확인 요약 → 주문 준비(결제 없는 보류 주문)**까지 합니다.
 
 ## 설치
 
@@ -50,6 +50,8 @@ python -m src.flights --from ICN --to MNL --date 2026-12-20 --adults 2
    - 호칭 `mr/ms/mrs/miss/dr`, 성별 `m/f`, 생년월일 `YYYY-MM-DD`
    - 전화번호: 국가번호 포함 (`+821012345678`)
    - `trip.purpose`(출장 목적), `trip.cost_center`(비용 부서)는 선택 항목입니다.
+   - `passport`(여권번호·만료일·발급국 2글자 코드)는 선택 항목입니다. 운임이 여권 정보를 요구하면 필수로 검사하고,
+     출발일 전에 만료되면 막고, 출발일 기준 잔여 6개월 미만이면 경고합니다. 화면에는 번호 일부만 보여줍니다.
    - 탑승객 수는 검색 인원과 같아야 하고, 출발일 기준 만 18세 이상이어야 합니다.
 
 2. 실행
@@ -68,6 +70,33 @@ python -m src.flights --from ICN --to MNL --date 2026-12-20 --adults 2
 - `yes`일 때만 `data/drafts/draft_<구간>_<출발일>_<확인시각>.json`에 예약 준비 내용을 저장합니다.
   탑승객은 Duffel 승객 ID와 순서대로 짝지어 저장되어 다음 단계(주문 준비)에서 씁니다.
 
+## 주문 준비 (결제 직전까지)
+
+Duffel의 즉시 발권(instant) 주문은 결제를 포함하므로 **만들지 않습니다**. 결제 API는 코드에서 호출 자체를 차단합니다.
+대신 결제 없이 좌석·가격을 잡아두는 **보류(hold) 주문**까지만 하고, 결제는 사람이 Duffel 대시보드에서 직접 합니다.
+
+```bash
+python -m src.orders prepare            # 점검 모드: 주문 요청서만 저장 (API로 주문하지 않음)
+python -m src.orders prepare --hold     # 최종 요약 + yes 확인 후 샌드박스 보류 주문 생성
+```
+
+- `--draft data/drafts/draft_....json`으로 준비 내용을 지정할 수 있습니다. 생략하면 가장 최근 것을 씁니다.
+- 운임을 다시 조회해 2단계 확인 때와 가격을 비교하고, 결제 마감·가격 보장 시각을 보여줍니다.
+- 다음 경우에는 주문을 만들지 않고 중단합니다:
+  운임 유효 시간 만료 / 즉시 결제가 필요한 운임(보류 불가, 정보가 없을 때도 보류 불가로 판단) /
+  승객 구성 변경 / 여권 정보 누락·만료 / 운영(live) 운임.
+- 여권 정보는 운임이 요구할 때만 Duffel에 보냅니다.
+- 결과는 `data/orders/`에 저장됩니다: 요청서 `order_request_*.json`, 보류 주문 `order_<예약번호>_*.json`.
+- 보류 주문은 결제 마감까지 결제하지 않으면 자동 취소됩니다.
+
+### 보류 주문 취소
+
+```bash
+python -m src.orders cancel --order ord_0000...
+```
+
+취소 견적(환불액)을 먼저 보여주고 `yes` 확인 후에만 취소를 확정합니다.
+
 ## 테스트
 
 ```bash
@@ -81,11 +110,12 @@ API를 호출하지 않고 `tests/fixtures/`의 샘플 응답으로 검증합니
 ```
 src/config.py    .env 로드, 테스트 키 강제
 src/models.py    검색 조건·항공편 모델 (pydantic, 금액은 Decimal)
-src/duffel.py    Duffel API 공용 호출 (조회 전용, 테스트 키 재확인, 오류 원인 출력)
+src/duffel.py    Duffel API 공용 호출 (테스트 키 재확인, 결제 엔드포인트 차단, 오류 원인 출력)
 src/flights.py   항공권 검색 + CLI
 src/compare.py   가격순 정렬
 src/export.py    검색 결과 CSV 저장
 src/offers.py    운임 재조회 (가격·규정·만료·수하물), 검색 CSV에서 선택
 src/travelers.py 탑승객 정보 검증 (여권 영문 이름, 나이, 연락처)
 src/summary.py   예약 전 확인 요약 + yes/no + 준비 내용 저장
+src/orders.py    주문 요청서 생성, 보류 주문 생성·취소 (결제 없음)
 ```

@@ -11,8 +11,25 @@ DUFFEL_VERSION = "v2"
 TIMEOUT_SECONDS = 60.0  # 항공사 응답을 기다리므로 넉넉히
 
 
+# 결제 관련 엔드포인트는 어떤 경우에도 호출하지 않는다 (CLAUDE.md 원칙 1)
+BLOCKED_PATH_PARTS = ("/payments", "/payment_intents")
+
+
 class DuffelError(Exception):
     """Duffel API 호출 실패. 원인을 담는다."""
+
+
+class BlockedEndpointError(Exception):
+    """결제 등 금지된 엔드포인트 호출 시도."""
+
+
+def check_not_payment(path: str, body: dict | None) -> None:
+    lowered = path.lower()
+    if any(part in lowered for part in BLOCKED_PATH_PARTS):
+        raise BlockedEndpointError(f"결제 관련 엔드포인트는 호출하지 않습니다: {path}")
+    data = (body or {}).get("data") if isinstance(body, dict) else None
+    if isinstance(data, dict) and ("payments" in data or data.get("type") == "instant"):
+        raise BlockedEndpointError("결제가 포함된 요청(payments / instant 주문)은 보내지 않습니다.")
 
 
 def describe_error(resp: httpx.Response) -> str:
@@ -34,6 +51,7 @@ def duffel_request(
     **kwargs,
 ) -> dict:
     """Duffel에 요청하고 JSON 본문을 돌려준다. 실패 시 원인을 담은 DuffelError."""
+    check_not_payment(path, kwargs.get("json"))
     api_key = validate_duffel_key(api_key)  # 호출 직전에도 테스트 키인지 재확인
     headers = {
         "Authorization": f"Bearer {api_key}",

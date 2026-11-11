@@ -55,6 +55,10 @@ class OfferDetails(BaseModel):
     change: FareCondition | None
     baggage: str
     live_mode: bool
+    requires_instant_payment: bool = True  # 정보가 없으면 보류 불가로 본다 (안전한 쪽)
+    payment_required_by: datetime | None = None
+    price_guarantee_expires_at: datetime | None = None
+    identity_documents_required: bool = False
 
     def is_expired(self, now: datetime | None = None) -> bool:
         if self.expires_at is None:
@@ -67,18 +71,29 @@ class OfferDetails(BaseModel):
         segments = offer["slices"][0]["segments"]
         first_pax = (segments[0].get("passengers") or [{}])[0]
         conditions = offer.get("conditions") or {}
-        expires = offer.get("expires_at")
+        payment = offer.get("payment_requirements") or {}
         return cls(
             flight=flight,
             cabin_class=first_pax.get("cabin_class"),
             connection_airports=[s["destination"]["iata_code"] for s in segments[:-1]],
             passenger_ids=[p["id"] for p in offer.get("passengers", [])],
-            expires_at=datetime.fromisoformat(expires.replace("Z", "+00:00")) if expires else None,
+            expires_at=parse_ts(offer.get("expires_at")),
             refund=FareCondition.from_duffel(conditions.get("refund_before_departure")),
             change=FareCondition.from_duffel(conditions.get("change_before_departure")),
             baggage=summarize_baggage(segments),
             live_mode=bool(offer.get("live_mode", False)),
+            requires_instant_payment=bool(payment.get("requires_instant_payment", True)),
+            payment_required_by=parse_ts(payment.get("payment_required_by")),
+            price_guarantee_expires_at=parse_ts(payment.get("price_guarantee_expires_at")),
+            identity_documents_required=bool(offer.get("passenger_identity_documents_required", False)),
         )
+
+
+def parse_ts(value: str | None) -> datetime | None:
+    """Duffel ISO 시각(끝의 Z 포함)을 timezone 있는 datetime으로."""
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def summarize_baggage(segments: list[dict]) -> str:

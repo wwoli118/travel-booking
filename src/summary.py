@@ -34,6 +34,7 @@ from .travelers import (
     Traveler,
     TravelerFile,
     TravelerFileError,
+    check_passports,
     check_travelers_for_flight,
     load_travelers,
 )
@@ -43,37 +44,42 @@ DEFAULT_TRAVELERS = DATA_DIR / "travelers.json"
 LINE = "=" * 44
 
 
-def price_change_note(details: OfferDetails, selected: SelectedOffer) -> tuple[str, bool]:
-    """(설명, 가격이 올랐거나 비교 불가인지). 검색 시 가격이 없으면 비교하지 않는다."""
+def price_change_note(
+    details: OfferDetails, selected: SelectedOffer, baseline: str = "검색 시"
+) -> tuple[str, bool]:
+    """(설명, 가격이 올랐거나 비교 불가인지). 비교 기준 가격이 없으면 비교하지 않는다."""
     now_amt, now_cur = details.flight.total_amount, details.flight.total_currency
     if selected.searched_amount is None:
-        return "(검색 시 가격 정보 없음)", False
+        return f"({baseline} 가격 정보 없음)", False
     was = f"{selected.searched_amount:,.2f} {selected.searched_currency}"
     if selected.searched_currency != now_cur:
-        return f"(검색 시 {was} — 통화가 바뀌어 비교할 수 없음)", True
+        return f"({baseline} {was} — 통화가 바뀌어 비교할 수 없음)", True
     diff = now_amt - selected.searched_amount
     if diff == 0:
-        return f"(검색 시 {was}, 변동 없음)", False
+        return f"({baseline} {was}, 변동 없음)", False
     if diff > 0:
-        return f"(검색 시 {was}, {diff:,.2f} {now_cur} 인상)", True
-    return f"(검색 시 {was}, {-diff:,.2f} {now_cur} 인하)", False
+        return f"({baseline} {was}, {diff:,.2f} {now_cur} 인상)", True
+    return f"({baseline} {was}, {-diff:,.2f} {now_cur} 인하)", False
 
 
 def build_summary(
     details: OfferDetails,
     travelers: TravelerFile,
     selected: SelectedOffer,
-    now: datetime | None = None,
+    baseline: str = "검색 시",
+    title: str = "예약 전 확인",
+    extra_lines: list[str] | None = None,
+    footer: str = "※ 이 단계에서는 예약(주문)과 결제를 하지 않습니다.",
 ) -> str:
     f = details.flight
     stops = f.stops_label
     if details.connection_airports:
         stops += f": {', '.join(details.connection_airports)}"
-    price_note, price_warn = price_change_note(details, selected)
+    price_note, price_warn = price_change_note(details, selected, baseline)
 
     lines = [
         LINE,
-        "예약 전 확인".center(40),
+        title.center(40),
         LINE,
         f"항공편    {f.airline} {f.flight_numbers} ({stops})",
         f"구간      {f.origin} {f.departing_at:%Y-%m-%d %H:%M} → "
@@ -81,7 +87,9 @@ def build_summary(
         f"좌석      성인 {len(details.passenger_ids)}석, {details.cabin_class or '좌석 등급 정보 없음'}",
         "탑승객    "
         + "\n          ".join(
-            f"{i}) {t.passport_name} ({t.born_on.isoformat()}, {t.gender.upper()})"
+            f"{i}) {t.passport_name} ({t.born_on.isoformat()}, {t.gender.upper()}"
+            + (f", 여권 {t.passport.masked_number} ~{t.passport.expires_on.isoformat()}" if t.passport else "")
+            + ")"
             for i, t in enumerate(travelers.travelers, start=1)
         ),
         f"총액      {f.price_label}  {price_note}",
@@ -96,18 +104,23 @@ def build_summary(
         lines.append(
             f"출장      목적: {travelers.trip.purpose or '-'} / 비용 부서: {travelers.trip.cost_center or '-'}"
         )
+    lines += extra_lines or []
     if price_warn:
-        lines += ["", "!!! 주의: 검색 때보다 가격이 올랐거나 비교할 수 없습니다. 총액을 다시 확인하세요. !!!"]
+        lines += ["", f"!!! 주의: {baseline}보다 가격이 올랐거나 비교할 수 없습니다. 총액을 다시 확인하세요. !!!"]
     if not details.live_mode:
         lines.append("※ 샌드박스 테스트 데이터입니다.")
-    lines += ["※ 이 단계에서는 예약(주문)과 결제를 하지 않습니다.", LINE]
+    lines += [footer, LINE]
     return "\n".join(lines)
 
 
-def ask_confirmation(input_fn: Callable[[str], str] = input, attempts: int = 3) -> bool:
+def ask_confirmation(
+    input_fn: Callable[[str], str] = input,
+    attempts: int = 3,
+    question: str = "이 내용으로 예약을 준비할까요?",
+) -> bool:
     """yes/no로 확인받는다. 명확한 yes가 아니면 진행하지 않는다."""
     for _ in range(attempts):
-        answer = input_fn("이 내용으로 예약을 준비할까요? (yes/no): ").strip().lower()
+        answer = input_fn(f"{question} (yes/no): ").strip().lower()
         if answer in {"yes", "y"}:
             return True
         if answer in {"no", "n", ""}:
@@ -201,14 +214,18 @@ def main(
     print(f"운임 다시 조회 중: {selected.offer_id} (Duffel 테스트 환경)")
     try:
         details = fetch_offer(selected.offer_id, api_key, client=client)
-        check_travelers_for_flight(
-            travelers.travelers, len(details.passenger_ids), details.flight.departing_at.date()
+        departure = details.flight.departing_at.date()
+        check_travelers_for_flight(travelers.travelers, len(details.passenger_ids), departure)
+        passport_warnings = check_passports(
+            travelers.travelers, departure, details.identity_documents_required
         )
     except (DuffelError, TravelerFileError) as e:
         print(f"[오류] {e}", file=sys.stderr)
         return 1
 
     print(build_summary(details, travelers, selected))
+    for w in passport_warnings:
+        print(f"[주의] {w}")
 
     if details.is_expired():
         print(
