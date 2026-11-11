@@ -24,6 +24,8 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config import DATA_DIR
+from decimal import Decimal
+
 from .travelers import EMAIL_RE, E164_RE, normalize_passport_name
 
 EMAILS_DIR = DATA_DIR / "emails"
@@ -107,6 +109,26 @@ class PaymentInfo(_Strict):
         return v
 
 
+class Price(_Strict):
+    """총 숙박 요금 (회계 내역용, 선택). 금액은 항상 통화와 함께."""
+
+    total_amount: Decimal = Field(gt=0)
+    currency: str
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _currency(cls, v: str) -> str:
+        v = str(v).strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", v):
+            raise ValueError(f"통화는 3글자 코드로 입력하세요 (예: PHP, KRW, USD): {v!r}")
+        return v
+
+
+class Trip(_Strict):
+    purpose: str | None = None
+    cost_center: str | None = None
+
+
 class Guest(_Strict):
     room: int = Field(ge=1)
     given_name: str
@@ -128,6 +150,8 @@ class HotelBooking(_Strict):
     booker: Booker
     payment: PaymentInfo
     guests: list[Guest] = Field(min_length=1)
+    price: Price | None = None  # 회계 내역 기록 시 필요
+    trip: Trip = Trip()
 
     @property
     def nights(self) -> int:
@@ -169,7 +193,7 @@ class HotelBooking(_Strict):
         return self
 
 
-def load_booking(path: Path, today: date | None = None) -> HotelBooking:
+def load_booking(path: Path, today: date | None = None, allow_past: bool = False) -> HotelBooking:
     if not path.exists():
         raise GuestEmailError(
             f"예약 정보 파일이 없습니다: {path}. hotel_booking.example.json을 복사해서 작성하세요."
@@ -197,7 +221,7 @@ def load_booking(path: Path, today: date | None = None) -> HotelBooking:
         raise GuestEmailError(f"{path} 내용 오류:\n" + "\n".join(lines)) from e
 
     today = today or date.today()
-    if booking.booking.check_out <= today:
+    if not allow_past and booking.booking.check_out <= today:
         raise GuestEmailError(f"이미 체크아웃 날짜({booking.booking.check_out.isoformat()})가 지난 예약입니다.")
     return booking
 

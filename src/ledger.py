@@ -1,7 +1,9 @@
 """회계용 예약 내역 (CLAUDE.md: 날짜, 출장자, 금액, 통화, 영수증 여부를 CSV로 남긴다).
 
 data/ledger.csv 에 주문 1건당 1행. 상태가 바뀌면 같은 행을 갱신한다.
-- 보류 주문 생성 시 자동 추가 (상태: 결제대기)
+- 항공: 보류 주문 생성 시 자동 추가 (상태: 결제대기)
+- 호텔: add-hotel 로 예약 정보 파일(hotel_booking.json)을 확인(yes) 후 추가
+        (선결제면 결제완료, 아니면 결제대기 / 구간 열에 숙소명)
 - 보류 주문 취소 시 자동 갱신 (상태: 취소)
 - 사람이 Duffel 대시보드에서 결제한 뒤 sync 로 Duffel 주문 상태를 조회해 반영 (조회 전용)
   또는 mark-paid 로 직접 표시 (상태: 결제완료)
@@ -10,6 +12,8 @@ data/ledger.csv 에 주문 1건당 1행. 상태가 바뀌면 같은 행을 갱�
     python -m src.ledger list
     python -m src.ledger sync                      # 취소 외 전체 주문의 결제 여부 조회·반영
     python -m src.ledger sync --order ord_... --dry-run
+    python -m src.ledger add-hotel --booking data/hotel_booking.json
+    python -m src.ledger mark-cancelled --order HOTEL-... --refund 0 --currency PHP
     python -m src.ledger mark-paid --order ord_0000... --receipt
     python -m src.ledger receipt --order ord_0000... --yes
 """
@@ -19,10 +23,11 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -31,6 +36,7 @@ import httpx
 
 from .config import DATA_DIR, ConfigError, load_duffel_key
 from .duffel import DuffelError
+from .guest_email import GuestEmailError, HotelBooking, load_booking
 from .order_status import (
     PAYMENT_AWAITING,
     PAYMENT_CANCELLED,
@@ -72,6 +78,8 @@ COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 STATUS_HELD = "결제대기"
 STATUS_PAID = "결제완료"
 STATUS_CANCELLED = "취소"
+KIND_FLIGHT = "항공"
+KIND_HOTEL = "호텔"
 
 
 class LedgerError(Exception):
@@ -168,6 +176,78 @@ def add_flight_order(
     return row
 
 
+def hotel_order_id(b: HotelBooking) -> str:
+    """호텔 예약의 내역 키. 예약 사이트가 다르면 같은 번호도 다른 예약으로 본다."""
+    platform = re.sub(r"[^A-Za-z0-9]", "", b.booking.platform or "DIRECT").upper()
+    return f"HOTEL-{platform}-{b.booking.reference}"
+
+
+def hotel_row(b: HotelBooking) -> dict:
+    """호텔 예약을 내역 행으로 바꾼다 (파일에 쓰지 않음)."""
+    if b.price is None:
+        raise LedgerError(
+            "예약 정보 파일에 price(total_amount, currency)가 없습니다. 회계 내역에는 금액과 통화가 필요합니다."
+        )
+    bk = b.booking
+    paid = b.payment.prepaid is True
+    detail = f"{bk.check_in.isoformat()}~{bk.check_out.isoformat()} {b.nights}박 {bk.rooms}실, {bk.platform or '직접 예약'}"
+    if b.payment.prepaid is False:
+        detail += ", 현장 결제"
+    elif b.payment.prepaid is None:
+        detail += ", 결제 시점 미기재"
+    return {
+        "기록일시": now_local(),
+        "출발일": bk.check_in.isoformat(),
+        "구분": KIND_HOTEL,
+        "출장자": "; ".join(g.passport_name for g in b.guests),
+        "인원": str(len(b.guests)),
+        "출장목적": b.trip.purpose or "",
+        "비용부서": b.trip.cost_center or "",
+        "구간": b.hotel.name,
+        "항공사": "",
+        "편명": "",
+        "예약번호": bk.reference,
+        "주문ID": hotel_order_id(b),
+        "금액": f"{b.price.total_amount:.2f}",
+        "통화": b.price.currency,
+        "상태": STATUS_PAID if paid else STATUS_HELD,
+        "결제마감": "",
+        "결제확인일시": now_local() if paid else "",
+        "영수증": "N",
+        "환불액": "",
+        "환불통화": "",
+        "비고": detail,
+        "테스트": "N",
+        "항공권번호": "",
+        "최종조회일시": "",
+    }
+
+
+def add_hotel_booking(b: HotelBooking, path: Path = LEDGER_PATH) -> dict:
+    rows = read_rows(path)
+    row = hotel_row(b)
+    if any(r["주문ID"] == row["주문ID"] for r in rows):
+        raise LedgerError(f"이미 기록된 호텔 예약입니다: {row['주문ID']}")
+    rows.append(row)
+    write_rows(rows, path)
+    return row
+
+
+def format_hotel_preview(row: dict) -> str:
+    return "\n".join(
+        [
+            "회계 내역에 추가할 호텔 예약:",
+            f"  숙소     {row['구간']}",
+            f"  일정     {row['비고']}",
+            f"  투숙객   {row['출장자']} ({row['인원']}명)",
+            f"  예약번호 {row['예약번호']}  (내역 키 {row['주문ID']})",
+            f"  금액     {row['금액']} {row['통화']}",
+            f"  상태     {row['상태']}  / 영수증 {row['영수증']}",
+            f"  출장     목적: {row['출장목적'] or '-'} / 비용 부서: {row['비용부서'] or '-'}",
+        ]
+    )
+
+
 def _find(rows: list[dict], order_id: str) -> dict:
     for r in rows:
         if r["주문ID"] == order_id:
@@ -229,10 +309,10 @@ def totals(rows: list[dict]) -> dict[tuple[str, str], Decimal]:
 def format_list(rows: list[dict]) -> str:
     if not rows:
         return "기록된 예약이 없습니다."
-    lines = [f"{'출발일':<11}{'상태':<7}{'예약번호':<9}{'출장자':<28}{'금액':>16}  영수증  주문ID"]
+    lines = [f"{'출발일':<11}{'구분':<4}{'상태':<7}{'예약번호':<11}{'출장자':<28}{'금액':>16}  영수증  주문ID"]
     for r in rows:
         lines.append(
-            f"{r['출발일']:<11}{r['상태']:<7}{r['예약번호']:<9}{r['출장자'][:28]:<28}"
+            f"{r['출발일']:<11}{r['구분']:<4}{r['상태']:<7}{r['예약번호']:<11}{r['출장자'][:28]:<28}"
             f"{r['금액'] + ' ' + r['통화']:>16}  {r['영수증']:^6}  {r['주문ID']}"
         )
     lines.append("")
@@ -319,9 +399,13 @@ def sync(
     """Duffel에서 주문 상태를 조회해 내역에 반영한다. (출력 문구, 조회 실패 건수)."""
     rows = read_rows(path)
     if order_id:
-        targets: Iterable[dict] = [_find(rows, order_id)]
+        target = _find(rows, order_id)
+        if target["구분"] not in ("", KIND_FLIGHT):
+            raise LedgerError(f"{order_id}는 {target['구분']} 내역이라 Duffel에서 조회할 수 없습니다.")
+        targets: Iterable[dict] = [target]
     else:
-        targets = [r for r in rows if r["상태"] != STATUS_CANCELLED]
+        # Duffel 조회는 항공 주문만 (호텔은 Duffel 주문이 아님)
+        targets = [r for r in rows if r["상태"] != STATUS_CANCELLED and r["구분"] in ("", KIND_FLIGHT)]
     out: list[str] = []
     failures = 0
     changed_any = False
@@ -365,6 +449,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sy = sub.add_parser("sync", help="Duffel에서 결제 여부를 조회해 내역에 반영 (조회 전용)")
     sy.add_argument("--order", help="특정 주문만 조회 (생략 시 취소 외 전체)")
     sy.add_argument("--dry-run", action="store_true", help="조회 결과만 보고 내역은 바꾸지 않음")
+    ah = sub.add_parser("add-hotel", help="호텔 예약 정보 파일을 확인 후 내역에 추가")
+    ah.add_argument("--booking", type=Path, default=DATA_DIR / "hotel_booking.json")
+    mc = sub.add_parser("mark-cancelled", help="취소된 예약을 내역에 표시 (기록만 바꿈, 예약을 취소하지 않음)")
+    mc.add_argument("--order", required=True, help="주문ID (호텔은 HOTEL-...)")
+    mc.add_argument("--refund", help="환불액 (생략 시 0.00)")
+    mc.add_argument("--currency", help="환불 통화 (생략 시 원래 통화)")
     rc = sub.add_parser("receipt", help="영수증 여부 변경")
     rc.add_argument("--order", required=True)
     g = rc.add_mutually_exclusive_group(required=True)
@@ -377,9 +467,34 @@ def main(
     argv: list[str] | None = None,
     path: Path = LEDGER_PATH,
     client: httpx.Client | None = None,
+    input_fn: Callable[[str], str] = input,
 ) -> int:
     args = parse_args(argv)
     try:
+        if args.command == "add-hotel":
+            booking = load_booking(args.booking, allow_past=True)  # 다녀온 출장도 기록할 수 있게
+            row = hotel_row(booking)
+            print(format_hotel_preview(row))
+            answer = input_fn("이 내용으로 회계 내역에 추가할까요? (yes/no): ").strip().lower()
+            if answer not in {"yes", "y"}:
+                print("추가하지 않았습니다.")
+                return 0
+            add_hotel_booking(booking, path)
+            print(f"회계 내역에 추가했습니다: {path}")
+            return 0
+        if args.command == "mark-cancelled":
+            if args.refund is not None:
+                try:
+                    refund = f"{Decimal(args.refund):.2f}"
+                except InvalidOperation as e:
+                    raise LedgerError(f"환불액을 숫자로 입력하세요: {args.refund!r}") from e
+            else:
+                refund = None
+            currency = args.currency.upper() if args.currency else None
+            r = mark_cancelled(args.order, refund, currency, path)
+            print(f"내역을 '취소'로 표시했습니다: {r['예약번호']} (환불 {r['환불액']} {r['환불통화']})")
+            print("※ 내역만 바꿨습니다. 실제 예약 취소는 예약한 곳에서 직접 하세요.")
+            return 0
         if args.command == "sync":
             api_key = load_duffel_key()
             lines, failures = sync(api_key, path, args.order, args.dry_run, client)
@@ -396,7 +511,7 @@ def main(
         else:
             r = set_receipt(args.order, args.receipt, path)
             print(f"영수증 여부를 {r['영수증']}(으)로 바꿨습니다: {r['예약번호']}")
-    except (LedgerError, ConfigError) as e:
+    except (LedgerError, ConfigError, GuestEmailError) as e:
         print(f"[오류] {e}", file=sys.stderr)
         return 1
     return 0

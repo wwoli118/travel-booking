@@ -23,7 +23,23 @@
     "prepaid": true
   },
   "guests": [
-    {"room": 1, "given_name": "YOUNGHEE", "family_name": "KIM"},
-    {"room": 2, "given_name": "MINSU", "family_name": "PARK"}
-  ]
+    {
+      "room": 1,
+      "given_name": "YOUNGHEE",
+      "family_name": "KIM"
+    },
+    {
+      "room": 2,
+      "given_name": "MINSU",
+      "family_name": "PARK"
+    }
+  ],
+  "price": {
+    "total_amount": "15800.00",
+    "currency": "PHP"
+  },
+  "trip": {
+    "purpose": "마닐라 거래처 미팅",
+    "cost_center": "영업1팀"
+  }
 }

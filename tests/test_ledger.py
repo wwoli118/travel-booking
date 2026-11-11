@@ -290,3 +290,127 @@ def test_old_ledger_without_new_columns_still_works(path):
     fake = FakeDuffel({"ord_1": duffel_order(awaiting=False, tickets=["125111"])})
     ledger.sync("duffel_test_x", path, client=fake.client(), now=NOW)
     assert ledger.read_rows(path)[0]["항공권번호"] == "125111"
+
+
+# ---------------------------------------------------------------- 호텔 예약
+
+import copy as _copy  # noqa: E402
+import json as _json  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+HOTEL_EXAMPLE = _json.loads((_Path(__file__).parent.parent / "hotel_booking.example.json").read_text(encoding="utf-8"))
+
+
+def hotel_file(tmp_path, **over):
+    d = _copy.deepcopy(HOTEL_EXAMPLE)
+    for k, v in over.items():
+        if v is None:
+            d.pop(k, None)
+        else:
+            d[k] = {**d.get(k, {}), **v} if isinstance(v, dict) else v
+    f = tmp_path / "hotel.json"
+    f.write_text(_json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    return f
+
+
+def run_add_hotel(path, booking_file, answer="yes"):
+    return ledger.main(["add-hotel", "--booking", str(booking_file)], path=path, input_fn=lambda _: answer)
+
+
+def test_add_hotel_prepaid(tmp_path, path, capsys):
+    assert run_add_hotel(path, hotel_file(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "Example Hotel Manila" in out and "15800.00 PHP" in out
+    r = ledger.read_rows(path)[0]
+    assert (r["구분"], r["상태"], r["금액"], r["통화"]) == ("호텔", "결제완료", "15800.00", "PHP")
+    assert r["주문ID"] == "HOTEL-BOOKINGCOM-1234567890" and r["예약번호"] == "1234567890"
+    assert r["출장자"] == "KIM YOUNGHEE; PARK MINSU" and r["인원"] == "2"
+    assert r["출발일"] == "2026-12-20" and r["구간"] == "Example Hotel Manila"
+    assert "3박 2실" in r["비고"] and r["결제확인일시"] and r["영수증"] == "N" and r["테스트"] == "N"
+    assert (r["출장목적"], r["비용부서"]) == ("마닐라 거래처 미팅", "영업1팀")
+
+
+@pytest.mark.parametrize("prepaid,status,note", [(False, "결제대기", "현장 결제"), (None, "결제대기", "미기재")])
+def test_add_hotel_not_prepaid(tmp_path, path, prepaid, status, note):
+    f = hotel_file(tmp_path)
+    d = _json.loads(f.read_text())
+    if prepaid is None:
+        d["payment"].pop("prepaid")
+    else:
+        d["payment"]["prepaid"] = prepaid
+    f.write_text(_json.dumps(d), encoding="utf-8")
+    run_add_hotel(path, f)
+    r = ledger.read_rows(path)[0]
+    assert r["상태"] == status and note in r["비고"] and r["결제확인일시"] == ""
+
+
+def test_add_hotel_declined_writes_nothing(tmp_path, path, capsys):
+    assert run_add_hotel(path, hotel_file(tmp_path), answer="no") == 0
+    assert not path.exists() and "추가하지 않았습니다" in capsys.readouterr().out
+
+
+def test_add_hotel_requires_price(tmp_path, path, capsys):
+    assert run_add_hotel(path, hotel_file(tmp_path, price=None)) == 1
+    assert "price" in capsys.readouterr().err and not path.exists()
+
+
+@pytest.mark.parametrize("price,msg", [({"total_amount": "0", "currency": "PHP"}, "greater than 0"),
+                                       ({"total_amount": "100", "currency": "PESO"}, "3글자")])
+def test_add_hotel_bad_price(tmp_path, path, capsys, price, msg):
+    assert run_add_hotel(path, hotel_file(tmp_path, price=price)) == 1
+    assert msg in capsys.readouterr().err
+
+
+def test_add_hotel_duplicate(tmp_path, path, capsys):
+    f = hotel_file(tmp_path)
+    run_add_hotel(path, f)
+    assert run_add_hotel(path, f) == 1
+    assert "이미 기록된 호텔 예약" in capsys.readouterr().err
+
+
+def test_same_reference_different_platform_is_separate(tmp_path, path):
+    run_add_hotel(path, hotel_file(tmp_path))
+    run_add_hotel(path, hotel_file(tmp_path, booking={"platform": "Agoda"}))
+    assert [r["주문ID"] for r in ledger.read_rows(path)] == ["HOTEL-BOOKINGCOM-1234567890", "HOTEL-AGODA-1234567890"]
+
+
+def test_direct_booking_id(tmp_path, path):
+    run_add_hotel(path, hotel_file(tmp_path, booking={"platform": None}))
+    r = ledger.read_rows(path)[0]
+    assert r["주문ID"] == "HOTEL-DIRECT-1234567890" and "직접 예약" in r["비고"]
+
+
+def test_past_stay_can_still_be_recorded(tmp_path, path):
+    f = hotel_file(tmp_path, booking={"check_in": "2026-09-18", "check_out": "2026-09-20"})
+    assert run_add_hotel(path, f) == 0
+
+
+def test_sync_skips_hotel_rows(tmp_path, path):
+    add(path, "ord_1")
+    run_add_hotel(path, hotel_file(tmp_path, payment={"prepaid": False}))
+    fake = FakeDuffel({"ord_1": duffel_order()})
+    lines, failures = ledger.sync("duffel_test_x", path, client=fake.client(), now=NOW)
+    assert failures == 0 and fake.calls == [("GET", "/air/orders/ord_1")]
+
+
+def test_sync_specific_hotel_refused(tmp_path, path):
+    run_add_hotel(path, hotel_file(tmp_path))
+    with pytest.raises(ledger.LedgerError, match="호텔 내역이라 Duffel에서 조회할 수 없습니다"):
+        ledger.sync("duffel_test_x", path, order_id="HOTEL-BOOKINGCOM-1234567890", client=FakeDuffel({}).client())
+
+
+def test_mark_cancelled_cli_for_hotel(tmp_path, path, capsys):
+    run_add_hotel(path, hotel_file(tmp_path))
+    assert ledger.main(["mark-cancelled", "--order", "HOTEL-BOOKINGCOM-1234567890", "--refund", "15800"], path=path) == 0
+    r = ledger.read_rows(path)[0]
+    assert (r["상태"], r["환불액"], r["환불통화"]) == ("취소", "15800.00", "PHP")
+    assert "실제 예약 취소는 예약한 곳에서" in capsys.readouterr().out
+    assert ledger.main(["mark-cancelled", "--order", "HOTEL-BOOKINGCOM-1234567890", "--refund", "abc"], path=path) == 1
+
+
+def test_list_shows_kind_and_mixed_totals(tmp_path, path, capsys):
+    add(path, "ord_1")
+    run_add_hotel(path, hotel_file(tmp_path))
+    ledger.main(["list"], path=path)
+    out = capsys.readouterr().out
+    assert "항공" in out and "호텔" in out and "15,800.00 PHP" in out and "289.00 USD" in out

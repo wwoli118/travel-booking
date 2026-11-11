@@ -107,6 +107,7 @@ git에는 올라가지 않습니다.
 |---|---|
 | 보류 주문 생성 (`orders prepare --hold`) | 자동 추가, 상태 `결제대기`, 영수증 `N` |
 | 보류 주문 취소 (`orders cancel`) | 자동 갱신, 상태 `취소`, 환불액·환불통화 기록 |
+| 호텔 예약 (`ledger add-hotel`) | 예약 정보 파일 내용을 보여주고 `yes` 확인 후 추가. 선결제면 `결제완료`, 아니면 `결제대기` |
 | 사람이 Duffel 대시보드에서 결제한 뒤 | `sync`로 Duffel 주문 상태를 조회해 반영, 또는 `mark-paid`로 직접 표시 |
 
 ```bash
@@ -115,6 +116,8 @@ python -m src.ledger sync                                  # 취소 외 전체 �
 python -m src.ledger sync --order ord_0000... --dry-run    # 특정 주문만, 내역은 바꾸지 않고 결과만 보기
 python -m src.ledger mark-paid --order ord_0000... --receipt   # 결제완료 (영수증 받았으면 --receipt)
 python -m src.ledger receipt --order ord_0000... --yes         # 영수증 여부만 변경 (--yes / --no)
+python -m src.ledger add-hotel --booking data/hotel_booking.json   # 호텔 예약 추가 (확인 후)
+python -m src.ledger mark-cancelled --order HOTEL-... --refund 0 --currency PHP   # 취소 표시 (기록만)
 ```
 
 - 열: 기록일시, 출발일, 구분, 출장자, 인원, 출장목적, 비용부서, 구간, 항공사, 편명, 예약번호, 주문ID,
@@ -136,6 +139,11 @@ Duffel 주문을 **조회만**(`GET /air/orders/{id}`) 해서 내역에 반영�
 - 금액·통화가 내역과 다르면 경고합니다.
 - 조회에 실패한 주문은 원인을 출력하고 나머지는 계속 조회하며, 실패가 있으면 종료 코드 1입니다.
 - 영수증 여부는 결제와 별개라 자동으로 바꾸지 않습니다.
+- 호텔 행: `구분`=호텔, `출발일`=체크인, `구간`=숙소명, `비고`=체크인~체크아웃·박수·객실 수·예약처,
+  `주문ID`=`HOTEL-<예약처>-<예약번호>` (예약처가 다르면 같은 번호도 별도 예약). 지난 출장도 기록할 수 있습니다.
+- 호텔 예약 정보 파일에 `price`(총액·통화)가 있어야 기록됩니다. `trip`(출장 목적·비용 부서)은 선택입니다.
+- `sync`(Duffel 조회)는 항공 주문만 조회하고 호텔 행은 건너뜁니다.
+- `mark-cancelled`는 내역만 바꿉니다. 실제 예약 취소는 예약한 곳에서 직접 하세요.
 - 합계는 통화별로만 냅니다 (환율 환산 없음).
 - 결제완료인데 영수증이 없는 건은 `list`에서 경고합니다.
 - `mark-paid`는 기록만 바꿉니다. 이 코드는 결제를 하지 않습니다.
