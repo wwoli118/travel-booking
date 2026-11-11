@@ -1,0 +1,39 @@
+{
+  "data": {
+    "id": "off_cheap_one_stop",
+    "live_mode": false,
+    "expires_at": "2099-01-01T00:00:00Z",
+    "total_amount": "289.00",
+    "total_currency": "USD",
+    "owner": {"name": "Duffel Airways", "iata_code": "ZZ"},
+    "passengers": [{"id": "pas_001", "type": "adult"}, {"id": "pas_002", "type": "adult"}],
+    "conditions": {
+      "refund_before_departure": {"allowed": true, "penalty_amount": "50.00", "penalty_currency": "USD"},
+      "change_before_departure": {"allowed": false, "penalty_amount": null, "penalty_currency": null}
+    },
+    "slices": [{
+      "segments": [
+        {
+          "origin": {"iata_code": "ICN"}, "destination": {"iata_code": "TPE"},
+          "departing_at": "2026-12-20T07:00:00", "arriving_at": "2026-12-20T08:40:00",
+          "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+          "marketing_carrier_flight_number": "2002",
+          "passengers": [
+            {"passenger_id": "pas_001", "cabin_class": "economy", "baggages": [{"type": "checked", "quantity": 1}, {"type": "carry_on", "quantity": 1}]},
+            {"passenger_id": "pas_002", "cabin_class": "economy", "baggages": [{"type": "checked", "quantity": 1}, {"type": "carry_on", "quantity": 1}]}
+          ]
+        },
+        {
+          "origin": {"iata_code": "TPE"}, "destination": {"iata_code": "MNL"},
+          "departing_at": "2026-12-20T11:00:00", "arriving_at": "2026-12-20T13:15:00",
+          "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+          "marketing_carrier_flight_number": "2003",
+          "passengers": [
+            {"passenger_id": "pas_001", "cabin_class": "economy", "baggages": [{"type": "checked", "quantity": 1}, {"type": "carry_on", "quantity": 1}]},
+            {"passenger_id": "pas_002", "cabin_class": "economy", "baggages": [{"type": "checked", "quantity": 1}, {"type": "carry_on", "quantity": 1}]}
+          ]
+        }
+      ]
+    }]
+  }
+}

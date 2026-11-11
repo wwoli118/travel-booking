@@ -16,17 +16,10 @@ import httpx
 from pydantic import ValidationError
 
 from .compare import MixedCurrencyError, sort_by_price
-from .config import ConfigError, load_duffel_key, validate_duffel_key
+from .config import ConfigError, load_duffel_key
+from .duffel import DuffelError, duffel_request
 from .export import save_flights_csv
 from .models import FlightOffer, SearchQuery
-
-DUFFEL_BASE_URL = "https://api.duffel.com"
-DUFFEL_VERSION = "v2"
-TIMEOUT_SECONDS = 60.0  # 항공사 응답을 기다리므로 넉넉히
-
-
-class DuffelError(Exception):
-    """Duffel API 호출 실패. 원인을 담는다."""
 
 
 def build_offer_request_body(query: SearchQuery) -> dict:
@@ -45,49 +38,20 @@ def build_offer_request_body(query: SearchQuery) -> dict:
     }
 
 
-def _describe_error(resp: httpx.Response) -> str:
-    try:
-        errors = resp.json().get("errors", [])
-    except ValueError:
-        return f"HTTP {resp.status_code}: {resp.text[:300]}"
-    parts = [
-        f"{e.get('title', '')}: {e.get('message', '')} (code={e.get('code', '?')})" for e in errors
-    ]
-    return f"HTTP {resp.status_code} - " + ("; ".join(parts) or resp.text[:300])
-
-
 def search_flights(
     query: SearchQuery, api_key: str, client: httpx.Client | None = None
 ) -> list[FlightOffer]:
     """Duffel에 검색을 요청하고 결과를 FlightOffer 목록으로 돌려준다 (정렬 전)."""
-    api_key = validate_duffel_key(api_key)  # 호출 직전에도 테스트 키인지 재확인
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Duffel-Version": DUFFEL_VERSION,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    own_client = client is None
-    client = client or httpx.Client(base_url=DUFFEL_BASE_URL, timeout=TIMEOUT_SECONDS)
-    try:
-        resp = client.post(
-            "/air/offer_requests",
-            params={"return_offers": "true"},
-            json=build_offer_request_body(query),
-            headers=headers,
-        )
-    except httpx.HTTPError as e:
-        raise DuffelError(f"Duffel API에 연결하지 못했습니다: {type(e).__name__}: {e}") from e
-    finally:
-        if own_client:
-            client.close()
-
-    if resp.status_code >= 400:
-        raise DuffelError(_describe_error(resp))
-
-    raw_offers = resp.json().get("data", {}).get("offers", [])
+    body = duffel_request(
+        "POST",
+        "/air/offer_requests",
+        api_key,
+        client=client,
+        params={"return_offers": "true"},
+        json=build_offer_request_body(query),
+    )
     offers: list[FlightOffer] = []
-    for raw in raw_offers:
+    for raw in body.get("data", {}).get("offers", []):
         try:
             offers.append(FlightOffer.from_duffel(raw))
         except (KeyError, ValueError, ValidationError) as e:

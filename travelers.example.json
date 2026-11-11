@@ -1,0 +1,26 @@
+{
+  "trip": {
+    "purpose": "마닐라 거래처 미팅",
+    "cost_center": "영업1팀"
+  },
+  "travelers": [
+    {
+      "title": "mr",
+      "given_name": "GILDONG",
+      "family_name": "HONG",
+      "gender": "m",
+      "born_on": "1985-03-02",
+      "email": "hong@example.com",
+      "phone_number": "+821012345678"
+    },
+    {
+      "title": "ms",
+      "given_name": "YOUNGHEE",
+      "family_name": "KIM",
+      "gender": "f",
+      "born_on": "1990-07-15",
+      "email": "kim@example.com",
+      "phone_number": "+821098765432"
+    }
+  ]
+}

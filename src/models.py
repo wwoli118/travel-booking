@@ -98,3 +98,34 @@ class FlightOffer(BaseModel):
             total_amount=Decimal(offer["total_amount"]),
             total_currency=offer["total_currency"],
         )
+
+
+class FareCondition(BaseModel):
+    """취소(환불)·변경 규정 한 가지. Duffel이 정보를 주지 않으면 None으로 둔다."""
+
+    allowed: bool
+    penalty_amount: Decimal | None = None
+    penalty_currency: str | None = None
+
+    @classmethod
+    def from_duffel(cls, raw: dict | None) -> "FareCondition | None":
+        if raw is None:
+            return None
+        amount = raw.get("penalty_amount")
+        return cls(
+            allowed=bool(raw["allowed"]),
+            penalty_amount=Decimal(amount) if amount is not None else None,
+            penalty_currency=raw.get("penalty_currency"),
+        )
+
+    @staticmethod
+    def label(cond: "FareCondition | None") -> str:
+        if cond is None:
+            return "정보 없음 (항공사 규정을 직접 확인하세요)"
+        if not cond.allowed:
+            return "불가"
+        if cond.penalty_amount is None:
+            return "가능 (수수료 정보 없음)"
+        if cond.penalty_amount == 0:
+            return "가능, 수수료 없음"
+        return f"가능, 수수료 {cond.penalty_amount:,.2f} {cond.penalty_currency or '(통화 정보 없음)'}"
