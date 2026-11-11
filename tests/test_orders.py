@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from src import orders, summary
+from src import ledger, orders, summary
 from src.offers import OfferDetails, SelectedOffer
 from src.travelers import TravelerFile
 
@@ -65,7 +65,8 @@ def run(argv, rec, answers, tmp_path, capsys):
     it = iter(answers)
     client = httpx.Client(base_url="https://api.duffel.com", transport=httpx.MockTransport(rec))
     code = orders.main(argv, input_fn=lambda _: next(it), client=client,
-                       orders_dir=tmp_path / "orders", drafts_dir=tmp_path / "drafts")
+                       orders_dir=tmp_path / "orders", drafts_dir=tmp_path / "drafts",
+                       ledger_path=tmp_path / "ledger.csv")
     return code, capsys.readouterr()
 
 
@@ -197,8 +198,35 @@ def test_cancel_no_does_not_confirm(single_offer, tmp_path, capsys):
     assert "환불액: 0.00 USD" in out.out
 
 
-def test_cancel_yes_confirms(single_offer, tmp_path, capsys):
-    rec = Recorder(single_offer)
+def test_cancel_yes_confirms_and_updates_ledger(draft_path, single_offer, hold_response, tmp_path, capsys):
+    rec = Recorder(single_offer, hold_response)
+    run(["prepare", "--hold"], rec, ["yes"], tmp_path, capsys)
     code, out = run(["cancel", "--order", "ord_0000test"], rec, ["yes"], tmp_path, capsys)
     assert code == 0 and rec.calls[-1][1] == "/air/order_cancellations/ore_1/actions/confirm"
     assert "취소 완료" in out.out and list((tmp_path / "orders").glob("cancel_ord_0000test_*.json"))
+    row = ledger.read_rows(tmp_path / "ledger.csv")[0]
+    assert row["상태"] == "취소" and row["환불액"] == "0.00" and row["환불통화"] == "USD"
+
+
+def test_cancel_order_missing_from_ledger_warns(single_offer, tmp_path, capsys):
+    rec = Recorder(single_offer)
+    code, out = run(["cancel", "--order", "ord_0000test"], rec, ["yes"], tmp_path, capsys)
+    assert code == 3 and "취소 완료" in out.out and "회계 내역 갱신에 실패" in out.err
+
+
+def test_hold_adds_ledger_row(draft_path, single_offer, hold_response, tmp_path, capsys):
+    rec = Recorder(single_offer, hold_response)
+    code, out = run(["prepare", "--hold"], rec, ["yes"], tmp_path, capsys)
+    assert code == 0 and "회계 내역에 추가" in out.out
+    rows = ledger.read_rows(tmp_path / "ledger.csv")
+    assert len(rows) == 1
+    r = rows[0]
+    assert (r["주문ID"], r["예약번호"], r["상태"], r["금액"], r["통화"]) == ("ord_0000test", "RZPVXK", "결제대기", "289.00", "USD")
+    assert r["출장자"] == "HONG GILDONG; KIM YOUNGHEE" and r["인원"] == "2"
+    assert (r["출장목적"], r["비용부서"], r["구간"], r["출발일"]) == ("마닐라 거래처 미팅", "영업1팀", "ICN-MNL", "2026-12-20")
+    assert r["영수증"] == "N" and r["테스트"] == "Y"
+
+
+def test_hold_no_ledger_row_when_declined(draft_path, single_offer, tmp_path, capsys):
+    run(["prepare", "--hold"], Recorder(single_offer), ["no"], tmp_path, capsys)
+    assert not (tmp_path / "ledger.csv").exists()

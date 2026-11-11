@@ -30,6 +30,7 @@ from pydantic import ValidationError
 
 from .config import DATA_DIR, ConfigError, load_duffel_key
 from .duffel import BlockedEndpointError, DuffelError, duffel_request
+from .ledger import LEDGER_PATH, LedgerError, add_flight_order, mark_cancelled
 from .offers import OfferDetails, SelectedOffer, fetch_offer, parse_ts
 from .summary import DRAFTS_DIR, ask_confirmation, build_summary
 from .travelers import (
@@ -173,6 +174,7 @@ def prepare(
     client: httpx.Client | None = None,
     orders_dir: Path = ORDERS_DIR,
     drafts_dir: Path = DRAFTS_DIR,
+    ledger_path: Path = LEDGER_PATH,
 ) -> int:
     draft = load_draft(draft_path or latest_draft(drafts_dir))
     print(f"준비 내용: {draft.path.name}")
@@ -254,6 +256,12 @@ def prepare(
         "price_guarantee_expires_at": payment_status.get("price_guarantee_expires_at"),
         "trip": draft.trip.model_dump(mode="json"),
         "passengers": [t.passport_name for _, t in draft.passengers],
+        "flight": {
+            "airline": details.flight.airline,
+            "flight_numbers": details.flight.flight_numbers,
+            "route": f"{details.flight.origin}-{details.flight.destination}",
+            "departing_at": details.flight.departing_at.isoformat(timespec="minutes"),
+        },
     }
     out = save_json(result, orders_dir / f"order_{result['booking_reference'] or resp['id']}_{stamp}.json")
     print(
@@ -263,6 +271,31 @@ def prepare(
         "Duffel 대시보드에서 직접 결제하세요. 기한이 지나면 자동 취소됩니다.\n"
         f"기록: {out}"
     )
+    try:
+        add_flight_order(
+            order_id=result["order_id"],
+            booking_reference=result["booking_reference"],
+            departure_date=details.flight.departing_at.date().isoformat(),
+            travelers=result["passengers"],
+            purpose=draft.trip.purpose,
+            cost_center=draft.trip.cost_center,
+            route=result["flight"]["route"],
+            airline=details.flight.airline,
+            flight_numbers=details.flight.flight_numbers,
+            total_amount=result["total_amount"],
+            total_currency=result["total_currency"],
+            payment_required_by=result["payment_required_by"],
+            live_mode=bool(result["live_mode"]),
+            path=ledger_path,
+        )
+        print(f"회계 내역에 추가했습니다 (상태: 결제대기): {ledger_path}")
+    except LedgerError as e:
+        print(
+            f"[경고] 보류 주문은 생성됐지만 회계 내역 기록에 실패했습니다: {e}\n"
+            f"       주문 기록 파일({out.name})을 참고해 내역을 직접 보완하세요.",
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 
@@ -274,6 +307,7 @@ def cancel(
     input_fn: Callable[[str], str] = input,
     client: httpx.Client | None = None,
     orders_dir: Path = ORDERS_DIR,
+    ledger_path: Path = LEDGER_PATH,
 ) -> int:
     print(f"취소 견적 요청 중: {order_id} (견적만으로는 취소되지 않습니다)")
     quote = duffel_request(
@@ -301,6 +335,12 @@ def cancel(
         orders_dir / f"cancel_{order_id}_{stamp}.json",
     )
     print(f"취소 완료: {order_id} (확정 {confirmed.get('confirmed_at')})\n기록: {out}")
+    try:
+        mark_cancelled(order_id, quote.get("refund_amount"), quote.get("refund_currency"), ledger_path)
+        print(f"회계 내역을 '취소'로 갱신했습니다: {ledger_path}")
+    except LedgerError as e:
+        print(f"[경고] 주문은 취소됐지만 회계 내역 갱신에 실패했습니다: {e}", file=sys.stderr)
+        return 3
     return 0
 
 
@@ -323,13 +363,14 @@ def main(
     client: httpx.Client | None = None,
     orders_dir: Path = ORDERS_DIR,
     drafts_dir: Path = DRAFTS_DIR,
+    ledger_path: Path = LEDGER_PATH,
 ) -> int:
     args = parse_args(argv)
     try:
         api_key = load_duffel_key()
         if args.command == "prepare":
-            return prepare(args.draft, args.hold, api_key, input_fn, client, orders_dir, drafts_dir)
-        return cancel(args.order, api_key, input_fn, client, orders_dir)
+            return prepare(args.draft, args.hold, api_key, input_fn, client, orders_dir, drafts_dir, ledger_path)
+        return cancel(args.order, api_key, input_fn, client, orders_dir, ledger_path)
     except (ConfigError, OrderPrepError) as e:
         print(f"[오류] {e}", file=sys.stderr)
         return 2
