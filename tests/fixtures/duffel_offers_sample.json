@@ -1,0 +1,65 @@
+{
+  "data": {
+    "id": "orq_sample",
+    "live_mode": false,
+    "offers": [
+      {
+        "id": "off_expensive_direct",
+        "total_amount": "512.40",
+        "total_currency": "USD",
+        "owner": {"name": "Duffel Airways", "iata_code": "ZZ"},
+        "slices": [{
+          "segments": [{
+            "origin": {"iata_code": "ICN"}, "destination": {"iata_code": "MNL"},
+            "departing_at": "2026-12-20T09:10:00", "arriving_at": "2026-12-20T12:35:00",
+            "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+            "marketing_carrier_flight_number": "1001"
+          }]
+        }]
+      },
+      {
+        "id": "off_cheap_one_stop",
+        "total_amount": "289.00",
+        "total_currency": "USD",
+        "owner": {"name": "Duffel Airways", "iata_code": "ZZ"},
+        "slices": [{
+          "segments": [
+            {
+              "origin": {"iata_code": "ICN"}, "destination": {"iata_code": "TPE"},
+              "departing_at": "2026-12-20T07:00:00", "arriving_at": "2026-12-20T08:40:00",
+              "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+              "marketing_carrier_flight_number": "2002"
+            },
+            {
+              "origin": {"iata_code": "TPE"}, "destination": {"iata_code": "MNL"},
+              "departing_at": "2026-12-20T11:00:00", "arriving_at": "2026-12-20T13:15:00",
+              "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+              "marketing_carrier_flight_number": "2003"
+            }
+          ]
+        }]
+      },
+      {
+        "id": "off_same_price_later",
+        "total_amount": "289.00",
+        "total_currency": "USD",
+        "owner": {"name": "Duffel Airways", "iata_code": "ZZ"},
+        "slices": [{
+          "segments": [{
+            "origin": {"iata_code": "ICN"}, "destination": {"iata_code": "MNL"},
+            "departing_at": "2026-12-20T21:00:00", "arriving_at": "2026-12-21T00:20:00",
+            "marketing_carrier": {"name": "Duffel Airways", "iata_code": "ZZ"},
+            "marketing_carrier_flight_number": "3003"
+          }]
+        }]
+      },
+      {
+        "id": "off_broken_no_slices",
+        "total_amount": "100.00",
+        "total_currency": "USD",
+        "owner": {"name": "Duffel Airways", "iata_code": "ZZ"},
+        "slices": []
+      }
+    ]
+  }
+}
