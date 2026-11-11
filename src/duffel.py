@@ -12,7 +12,9 @@ TIMEOUT_SECONDS = 60.0  # 항공사 응답을 기다리므로 넉넉히
 
 
 # 결제 관련 엔드포인트는 어떤 경우에도 호출하지 않는다 (CLAUDE.md 원칙 1)
-BLOCKED_PATH_PARTS = ("/payments", "/payment_intents")
+# - /stays/bookings: 호텔 예약 생성 즉시 Duffel 잔액에서 자동 결제됨
+# - payment_instruction: 예약 결제 지시
+BLOCKED_PATH_PARTS = ("/payments", "/payment_intents", "/stays/bookings", "payment_instruction")
 
 
 class DuffelError(Exception):

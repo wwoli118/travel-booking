@@ -1,0 +1,9 @@
+{
+  "_comment": "출장지 좌표 목록 (위도·경도는 근사값입니다. 필요하면 수정·추가하세요). radius_km는 기본 검색 반경입니다.",
+  "manila-makati": {"label": "마닐라 마카티 CBD (Ayala Ave)", "latitude": 14.5547, "longitude": 121.0244, "radius_km": 2},
+  "manila-bgc": {"label": "마닐라 BGC (Bonifacio Global City)", "latitude": 14.5509, "longitude": 121.0503, "radius_km": 2},
+  "manila-ortigas": {"label": "마닐라 오르티가스 센터", "latitude": 14.5869, "longitude": 121.0614, "radius_km": 2},
+  "manila-airport": {"label": "마닐라 공항(NAIA) 인근", "latitude": 14.5123, "longitude": 121.0165, "radius_km": 3},
+  "cebu-it-park": {"label": "세부 IT 파크", "latitude": 10.3304, "longitude": 123.9057, "radius_km": 2},
+  "duffel-test": {"label": "Duffel 테스트 호텔 (테스트 모드 전용, 헨더슨섬)", "latitude": -24.38, "longitude": -128.32, "radius_km": 5}
+}

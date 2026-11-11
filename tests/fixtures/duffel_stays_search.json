@@ -1,0 +1,51 @@
+{
+  "data": {
+    "created_at": "2026-11-11T02:00:00Z",
+    "results": [
+      {
+        "id": "srr_expensive",
+        "check_in_date": "2026-12-20", "check_out_date": "2026-12-23", "rooms": 1, "guests": [{"type": "adult"}],
+        "cheapest_rate_total_amount": "450.00", "cheapest_rate_currency": "USD",
+        "cheapest_rate_due_at_accommodation_amount": null, "cheapest_rate_due_at_accommodation_currency": null,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "accommodation": {
+          "id": "acc_grand", "name": "Grand Test Hotel", "rating": 5, "review_score": 9.1,
+          "location": {"address": {"line_one": "1 Ayala Ave", "city_name": "Makati", "country_code": "PH", "postal_code": "1226"},
+                       "geographic_coordinates": {"latitude": 14.55, "longitude": 121.02}},
+          "rooms": []
+        }
+      },
+      {
+        "id": "srr_cheap_low_score",
+        "check_in_date": "2026-12-20", "check_out_date": "2026-12-23", "rooms": 1, "guests": [{"type": "adult"}],
+        "cheapest_rate_total_amount": "300.00", "cheapest_rate_currency": "USD",
+        "cheapest_rate_due_at_accommodation_amount": "15.50", "cheapest_rate_due_at_accommodation_currency": "PHP",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "accommodation": {
+          "id": "acc_budget", "name": "Budget Inn", "rating": 3, "review_score": 7.2,
+          "location": {"address": {"line_one": "5 Makati Ave", "city_name": "Makati", "country_code": "PH", "postal_code": "1210"},
+                       "geographic_coordinates": null},
+          "rooms": []
+        }
+      },
+      {
+        "id": "srr_cheap_high_score",
+        "check_in_date": "2026-12-20", "check_out_date": "2026-12-23", "rooms": 1, "guests": [{"type": "adult"}],
+        "cheapest_rate_total_amount": "300.00", "cheapest_rate_currency": "USD",
+        "cheapest_rate_due_at_accommodation_amount": null, "cheapest_rate_due_at_accommodation_currency": null,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "accommodation": {
+          "id": "acc_city", "name": "City Business Hotel", "rating": null, "review_score": 8.4,
+          "location": {"address": {"line_one": "9 Paseo de Roxas", "city_name": "Makati", "country_code": "PH", "postal_code": "1226"},
+                       "geographic_coordinates": null},
+          "rooms": []
+        }
+      },
+      {
+        "id": "srr_broken",
+        "cheapest_rate_total_amount": "100.00", "cheapest_rate_currency": "USD",
+        "accommodation": {"name": "No Id Hotel"}
+      }
+    ]
+  }
+}

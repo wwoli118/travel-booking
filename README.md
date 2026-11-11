@@ -149,6 +149,36 @@ Duffel 주문을 **조회만**(`GET /air/orders/{id}`) 해서 내역에 반영�
 - `mark-paid`는 기록만 바꿉니다. 이 코드는 결제를 하지 않습니다.
 - 엑셀에서 파일을 열어둔 채 기록하면 실패할 수 있습니다. 이때는 원인을 출력하며, 기존 내역은 손상되지 않습니다.
 
+## 호텔 검색 (조회 전용)
+
+Duffel Stays로 숙소별 최저 요금을 총액 순으로 비교하고 CSV로 저장합니다. **예약·결제는 하지 않습니다.**
+(Duffel Stays는 예약 생성 즉시 Duffel 잔액에서 결제되므로 예약 API는 코드에서 차단합니다.)
+설계와 API 조사 내용은 [docs/hotel_search_design.md](docs/hotel_search_design.md)를 보세요.
+
+```bash
+python -m src.hotels --list-locations                      # 등록된 출장지
+python -m src.hotels --location manila-makati --check-in 2026-12-20 --check-out 2026-12-23
+python -m src.hotels --location manila-bgc --check-in 2026-12-20 --check-out 2026-12-23 --adults 2 --free-cancel
+python -m src.hotels --lat 14.55 --lng 121.02 --radius 3 --check-in 2026-12-20 --check-out 2026-12-23
+python -m src.hotels --location duffel-test --check-in 2026-12-20 --check-out 2026-12-22   # 테스트 호텔
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `--location` | 등록 지명 (`src/locations.json`, 좌표는 근사값이니 필요하면 수정·추가) |
+| `--lat --lng --radius` | 좌표로 검색, 반경 1~20km |
+| `--check-in --check-out` | 오늘 이후, 체크인은 330일 이내, 최대 99박 |
+| `--adults --rooms` | 기본 1인 1실. `--adults 3`이면 3실, 같은 방을 쓰면 `--rooms`로 지정 |
+| `--free-cancel` | 무료 취소 가능한 요금만 |
+| `--provider` | `duffel`(기본). `booking`, `agoda`는 파트너 승인 전이라 이유를 알려주고 멈춥니다 |
+
+- 결과: 숙소명, 성급, 평점, 총액(통화), 1박 평균, 현장 추가 요금(총액에 미포함, 숙소에서 따로 냄).
+  `data/hotels_<지명>_<체크인>_<조회시각>.csv`에 저장.
+- 같은 총액이면 평점 높은 순. 통화가 섞이면 정렬하지 않고 오류.
+- **테스트 키로는 Duffel 테스트 호텔만 검색됩니다** (`--location duffel-test`). 실제 도시·가격은 운영 키가 필요하고,
+  운영 키 사용은 별도 승인 사항입니다 (CLAUDE.md 원칙 4).
+- 요금별 취소 규정·식사 포함 여부 확인과 예약 전 요약은 다음 단계에서 만듭니다.
+
 ## 투숙객 안내 이메일 초안 (호텔)
 
 회사·대표 카드로 결제했지만 출장자가 투숙하는 경우, 체크인 때 카드 소지자 확인으로 막히지 않도록
@@ -200,4 +230,8 @@ src/orders.py    주문 요청서 생성, 보류 주문 생성·취소 (결제 �
 src/ledger.py    회계용 예약 내역 CSV (자동 기록, 결제 여부 조회·반영, 영수증 표시, 통화별 합계)
 src/order_status.py  Duffel 주문 상태 조회 (결제·취소·항공권번호, GET 전용)
 src/guest_email.py   호텔 투숙객 안내 이메일 초안 (영어·한국어, 발송하지 않음)
+src/hotels.py        호텔 검색·비교 CLI, CSV 저장
+src/hotel_models.py  호텔 검색 조건·결과 모델, 출장지 위치
+src/hotel_providers/ 공급자 어댑터 (duffel_stays 구현, booking·agoda는 승인 전)
+src/locations.json   출장지 좌표 목록
 ```
