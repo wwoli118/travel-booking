@@ -136,3 +136,122 @@ class HotelOffer(BaseModel):
         if not self.due_at_accommodation_amount:
             return "-"
         return f"{self.due_at_accommodation_amount:,.2f} {self.due_at_accommodation_currency or '(통화 정보 없음)'}"
+
+
+# ---------------------------------------------------------------- 요금·견적 (예약 전 확인용)
+
+BOARD_LABELS = {
+    "room_only": "객실만",
+    "breakfast": "조식 포함",
+    "half_board": "조식·석식 포함",
+    "full_board": "3식 포함",
+    "all_inclusive": "올인클루시브",
+}
+PAYMENT_LABELS = {
+    "pay_now": "선결제 (예약 시 전액)",
+    "deposit": "보증금 선결제, 잔액은 숙소에서",
+    "guarantee": "숙소에서 결제 (카드 보증)",
+}
+
+
+def fmt_with_offset(dt: datetime) -> str:
+    """시각을 받은 시간대 그대로 표시한다 (예: 2026-12-18 23:59 (UTC+08:00)). 시간대가 없으면 그대로."""
+    if dt.tzinfo is None:
+        return dt.strftime("%Y-%m-%d %H:%M")
+    off = dt.strftime("%z")
+    return f"{dt:%Y-%m-%d %H:%M} (UTC{off[:3]}:{off[3:]})"
+
+
+class CancellationStep(BaseModel):
+    """이 시각 전에 취소하면 refund_amount를 돌려받는다."""
+
+    before: datetime
+    refund_amount: Decimal
+    currency: str
+
+
+class HotelRate(BaseModel):
+    rate_id: str
+    room_name: str
+    board_type: str | None = None
+    payment_type: str | None = None
+    total_amount: Decimal
+    total_currency: str
+    due_at_accommodation_amount: Decimal | None = None
+    due_at_accommodation_currency: str | None = None
+    cancellation: list[CancellationStep] = []
+    conditions: list[tuple[str, str]] = []  # (제목, 내용)
+    available_payment_methods: list[str] = []
+    loyalty_programme_required: bool = False
+    expires_at: datetime | None = None
+
+    @property
+    def board_label(self) -> str:
+        return BOARD_LABELS.get(self.board_type or "", self.board_type or "정보 없음")
+
+    @property
+    def payment_label(self) -> str:
+        return PAYMENT_LABELS.get(self.payment_type or "", self.payment_type or "정보 없음")
+
+    @property
+    def price_label(self) -> str:
+        return f"{self.total_amount:,.2f} {self.total_currency}"
+
+    def free_cancellation_until(self, now: datetime) -> datetime | None:
+        """전액 환불되는 마지막 시각 (지금 이후일 때만)."""
+        full = [s for s in self.cancellation if s.refund_amount >= self.total_amount and s.before > now]
+        return max((s.before for s in full), default=None)
+
+    def cancellation_lines(self, now: datetime) -> list[str]:
+        """사람이 읽을 취소 규정. 정보가 없으면 환불 불가로 본다 (Duffel: 타임라인이 비면 환불 없음)."""
+        steps = sorted((s for s in self.cancellation if s.before > now), key=lambda s: s.before)
+        if not steps:
+            return ["환불 불가 (지금 취소하면 환불 없음)"]
+        lines = []
+        for s in steps:
+            when = fmt_with_offset(s.before)
+            if s.refund_amount >= self.total_amount:
+                lines.append(f"{when} 전까지 취소 시 전액 환불 (무료 취소)")
+            elif s.refund_amount == 0:
+                lines.append(f"{when} 전까지 취소해도 환불 없음")
+            else:
+                lines.append(f"{when} 전까지 취소 시 {s.refund_amount:,.2f} {s.currency} 환불")
+        lines.append(f"{fmt_with_offset(steps[-1].before)} 이후 취소 시 환불 없음")
+        return lines
+
+
+class HotelProperty(BaseModel):
+    accommodation_id: str
+    name: str
+    rating: int | None = None
+    review_score: float | None = None
+    address: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    check_in_after: str | None = None
+    check_out_before: str | None = None
+
+
+class HotelQuote(BaseModel):
+    """견적: 선택한 요금의 가용성·총액 재확인 결과. 예약·결제가 아니다."""
+
+    quote_id: str
+    property: HotelProperty
+    check_in: date
+    check_out: date
+    rooms: int
+    total_amount: Decimal
+    total_currency: str
+    due_at_accommodation_amount: Decimal | None = None
+    due_at_accommodation_currency: str | None = None
+    deposit_amount: Decimal | None = None
+    deposit_currency: str | None = None
+    rate: HotelRate | None = None  # 견적에 실린 요금 상세 (없으면 선택 시 요금 정보 사용)
+
+    @property
+    def nights(self) -> int:
+        return (self.check_out - self.check_in).days
+
+    @property
+    def nightly_average(self) -> Decimal:
+        return (self.total_amount / self.nights).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

@@ -31,6 +31,12 @@ from .travelers import EMAIL_RE, E164_RE, normalize_passport_name
 EMAILS_DIR = DATA_DIR / "emails"
 DEFAULT_BOOKING = DATA_DIR / "hotel_booking.json"
 ALLOWED_PAYMENT_KEYS = {"card_holder", "card_holder_stays", "card_last4", "prepaid"}
+# 호텔 예약 전 요약이 만든 초안에서 사람이 예약 후 채우는 항목
+FILL_AFTER_BOOKING = [
+    ("booking", "reference", "booking.reference(예약번호)"),
+    ("booker", "name", "booker.name(예약자 이름)"),
+    ("payment", "card_holder", "payment.card_holder(결제 카드 소지자 영문 이름)"),
+]
 
 WEEKDAYS_KO = "월화수목금토일"
 
@@ -202,6 +208,18 @@ def load_booking(path: Path, today: date | None = None, allow_past: bool = False
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise GuestEmailError(f"{path} JSON 형식 오류 ({e.lineno}행 {e.colno}열): {e.msg}") from e
+
+    if isinstance(raw, dict):
+        raw = {k: v for k, v in raw.items() if not k.startswith("_")}  # "_comment" 같은 안내용 키는 무시
+        blanks = [
+            label
+            for section, key, label in FILL_AFTER_BOOKING
+            if isinstance(raw.get(section), dict) and str(raw[section].get(key) or "").strip() == ""
+        ]
+        if blanks:
+            raise GuestEmailError(
+                f"{path.name}에 예약 후 채워야 할 항목이 비어 있습니다: {', '.join(blanks)}"
+            )
 
     payment = raw.get("payment") if isinstance(raw, dict) else None
     if isinstance(payment, dict):

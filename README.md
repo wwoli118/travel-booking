@@ -177,7 +177,33 @@ python -m src.hotels --location duffel-test --check-in 2026-12-20 --check-out 20
 - 같은 총액이면 평점 높은 순. 통화가 섞이면 정렬하지 않고 오류.
 - **테스트 키로는 Duffel 테스트 호텔만 검색됩니다** (`--location duffel-test`). 실제 도시·가격은 운영 키가 필요하고,
   운영 키 사용은 별도 승인 사항입니다 (CLAUDE.md 원칙 4).
-- 요금별 취소 규정·식사 포함 여부 확인과 예약 전 요약은 다음 단계에서 만듭니다.
+
+### 호텔 예약 전 확인
+
+검색 결과에서 숙소를 고르면 객실 요금을 모두 조회해 보여주고, 고른 요금을 견적(가격·가용성 재확인)으로 확인한 뒤
+요약과 `yes` 확인을 받습니다. **예약·결제는 하지 않습니다.** 견적은 예약이 아닙니다.
+
+```bash
+python -m src.hotel_summary --csv data/hotels_manila-makati_2026-12-20_<조회시각>.csv --rank 1
+python -m src.hotel_summary --csv ... --rank 1 --rate 2          # 요금 번호를 미리 지정
+python -m src.hotel_summary --csv ... --room-of 1,1,2            # 3명 2실: travelers.json 순서대로 객실 번호
+```
+
+- 요금 목록: 객실명, 식사(객실만/조식 포함 등), 결제 방식(선결제/보증금/숙소에서 결제), 무료 취소 기한, 총액.
+  같은 총액이면 무료 취소 가능한 요금이 먼저. Duffel 잔액으로 결제할 수 없거나 회원 번호가 필요한 요금은 `*` 표시.
+- 투숙객은 `data/travelers.json`을 쓰고 기본 1인 1실로 배정합니다. 인원은 검색 인원과 같아야 하고 체크인 기준 만 18세 이상.
+- 요약: 숙소·주소·성급, 일정(체크인·체크아웃 시간), 객실·식사, **객실별 투숙객 여권 영문 이름**, 총액·1박 평균,
+  현장 추가 요금, 결제 방식·보증금, **취소 규정(시점별 환불액)**, 요금 조건, 요금 유효 시각, 출장 목적·비용 부서.
+- 고른 요금보다 견적 가격이 오르거나 통화가 바뀌면 경고. 요금 유효 시간이 지났거나 견적의 일정·객실 수가
+  검색과 다르면 중단.
+- `yes`면 `data/drafts/hotel_draft_*.json`(준비 내용)과 **`data/hotel_booking_<숙소ID>_<체크인>.json`(예약 정보 초안)**을 저장합니다.
+
+예약 후 흐름:
+1. Duffel 대시보드에서 해당 숙소·요금으로 사람이 직접 예약·결제
+2. 초안의 `booking.reference`(예약번호), `booker.name`, `payment.card_holder`를 채움
+   (비어 있으면 이메일·회계 도구가 어떤 항목이 비었는지 알려주고 멈춤)
+3. `python -m src.guest_email --booking data/hotel_booking_....json`
+4. `python -m src.ledger add-hotel --booking data/hotel_booking_....json`
 
 ## 투숙객 안내 이메일 초안 (호텔)
 
@@ -231,6 +257,7 @@ src/ledger.py    회계용 예약 내역 CSV (자동 기록, 결제 여부 조�
 src/order_status.py  Duffel 주문 상태 조회 (결제·취소·항공권번호, GET 전용)
 src/guest_email.py   호텔 투숙객 안내 이메일 초안 (영어·한국어, 발송하지 않음)
 src/hotels.py        호텔 검색·비교 CLI, CSV 저장
+src/hotel_summary.py 호텔 예약 전 확인: 요금 조회·선택, 견적, 요약, 준비 내용·예약 정보 초안 저장
 src/hotel_models.py  호텔 검색 조건·결과 모델, 출장지 위치
 src/hotel_providers/ 공급자 어댑터 (duffel_stays 구현, booking·agoda는 승인 전)
 src/locations.json   출장지 좌표 목록
